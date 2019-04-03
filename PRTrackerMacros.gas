@@ -1,0 +1,101 @@
+// Generic function called every time the sheet is edited
+function checkNewRow(event){
+  var sheet = SpreadsheetApp.getActiveSheet();
+  var data = sheet.getDataRange().getValues()
+  var raisedCol = data[1].indexOf('PR Raised')+1;
+  
+  // Get the coordinates of the cell that was modified
+  var row = event.range.getRow();
+  var col = event.range.getColumn();
+  
+  // Get the stash link
+  var link = getCell(row,raisedCol);
+  if (link=="") return;
+  
+  // New PR has been added
+  if (col == raisedCol) {
+    
+    // Store the date added to the sheet
+    var dateCol = data[1].indexOf('Date added')+1;
+    var date = Utilities.formatDate(new Date(), "GMT+0", 'dd/MM/yyyy HH:mm:ss');
+    sheet.getRange(row, dateCol).setValue(date);
+    
+    // Record who created the PR
+    var raisedByEmail = Session.getActiveUser().getEmail();
+    var raisedByCol = data[1].indexOf('Raised By')+1;
+    sheet.getRange(row, raisedByCol).setValue(raisedByEmail);
+    
+    // Send a slack message
+    //slackNewPR(link,raisedByEmail);
+    
+    return;
+  }
+  
+  // Review is complete
+  if (isReviewComplete(row)) {
+    archiveReviewedPR(sheet,row);
+    resetReviewDropDownMenus(sheet,row);
+    //slackCompletePR(link);
+    return;
+  }
+  
+  // Other value has been updated
+  slackUpdated(link,row,col);
+}
+
+// Determine if the review is complete
+function isReviewComplete(rowIndex) {
+  if (!(isReviewPartDone(rowIndex,'Gap Analysis'))) return false;
+  if (!(isReviewPartDone(rowIndex,'Perf & Improv Review'))) return false;
+  if (!(isReviewPartDone(rowIndex,'Functionality, ACC & paperwork Review'))) return false;
+  return true;
+}
+
+// Check if given part of review is done
+function isReviewPartDone(rowIndex, colName) {
+  var sheet = SpreadsheetApp.getActiveSheet();
+  var data = sheet.getDataRange().getValues();
+  var colIndex = data[1].indexOf(colName)+1;
+  
+ 
+  // Check if this part of the review has a completed value
+  var reviewStatus = getCell(rowIndex,colIndex);
+  if (reviewStatus != "Done" && reviewStatus != "N/A") return false
+  
+  // Also check that the reviewer's initials have been set
+  var reviewerInitials = getCell(rowIndex,colIndex+1);
+  if (reviewerInitials == "") return false
+  
+  return true
+}
+
+// Archive a PR (use this once all the reviews have been completed)
+function archiveReviewedPR(raisedPRSheet,row) {
+  
+  var completedPRSheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('PRs Completed');
+  var targetRow = completedPRSheet.getRange(completedPRSheet.getLastRow()+1,1)
+  raisedPRSheet.getRange(row, 1,1,raisedPRSheet.getLastColumn()).moveTo(targetRow);
+  
+  // Add a "date completed" timestamp to the row in the archive sheet
+  var data = completedPRSheet.getDataRange().getValues();
+  var completedDateColIndex = data[0].indexOf('Date completed') + 1;
+  var date = Utilities.formatDate(new Date(), "GMT+0", 'dd/MM/yyyy HH:mm:ss');
+  completedPRSheet.getRange(completedPRSheet.getLastRow(), completedDateColIndex).setValue(date);
+}
+
+// Reset the drop down menus on the row to their initial values
+function resetReviewDropDownMenus(raisedPRSheet,row) {
+
+  var configSS = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Configuration');
+  var validationRange = configSS.getRange(2, 1, configSS.getLastRow());
+  var validationRule = SpreadsheetApp.newDataValidation().requireValueInRange(validationRange);
+  var data = raisedPRSheet.getDataRange().getValues();
+  
+  var colIndexGA  = data[1].indexOf('Gap Analysis') + 1;
+  var colIndexPrf = data[1].indexOf('Perf & Improv Review') + 1;
+  var colIndexACC = data[1].indexOf('Functionality, ACC & paperwork Review') + 1;
+  
+  raisedPRSheet.getRange(row, colIndexGA).setDataValidation(validationRule);
+  raisedPRSheet.getRange(row, colIndexPrf).setDataValidation(validationRule);
+  raisedPRSheet.getRange(row, colIndexACC).setDataValidation(validationRule);
+}
